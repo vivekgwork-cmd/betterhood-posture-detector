@@ -1,0 +1,12 @@
+{
+  "name": "slouch-catcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "betterhood Slouch Catcher prototype: AI posture check from a photo with product recommendation",
+  "main": "server.js",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js"
+  }
+}
