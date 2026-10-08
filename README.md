@@ -27,6 +27,8 @@ pick / snap / drop / paste photo
 
 - **The API key stays on the server.** The browser never sees it.
 - **Photos are never stored.** They're held in memory for one request only.
+- **The names and phone number are asked for last, when they tap "Roast on WhatsApp".** The form asks for the catcher's name, the caught person's name and the catcher's phone number. The names go on the Caught Card and in the WhatsApp text. The phone is never shown. Each form sent adds one line to `data/leads.jsonl` via `POST /api/lead`: names, phone, verdict and score, no photo. That file is gitignored, and `LEADS_FILE` moves it. If they close the form or tap "No thanks", they can still download the card, without names.
+- **The Caught Card is a 1080×1350 JPEG drawn in the browser.** On phones, "Roast on WhatsApp" opens the share sheet with the image attached. On desktops, it saves the image and opens WhatsApp with the text.
 - The AI is **forced to pick a product from `products.js`**, so it can't invent products or links.
 - The verdict can be `good`, `bad` or `unclear`. `unclear` covers photos with no person, only a face, and similar cases.
 - The server rate-limits each IP (default 6 per minute) to protect the free quota.
@@ -37,7 +39,7 @@ pick / snap / drop / paste photo
 |---|---|
 | `server.js` | Static server + `/api/analyze`, prompt, Gemini / OpenAI-compatible / demo providers |
 | `products.js` | Curated posture-relevant products from shop.betterhood.in (price, image, link, "best for" hint for the AI) |
-| `public/` | Front-end (betterhood tokens: `#4f275c`, Montserrat, 16px radii) |
+| `public/` | Front-end, themed after `figma-file-references/` (plum gradient, amber buttons, Montserrat + Gochi Hand) |
 
 ## Switching AI provider
 

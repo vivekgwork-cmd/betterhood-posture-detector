@@ -1,7 +1,8 @@
 // Slouch Catcher prototype server.
 // Serves the static front-end from ./public and exposes POST /api/analyze,
 // which sends the photo to a vision AI and returns a posture verdict + product pick.
-// Photos are only held in memory for the duration of the request; nothing is written to disk.
+// Photos are only held in memory for the duration of the request and never written to disk.
+// Names + phone from the share form (POST /api/lead) are appended to LEADS_FILE.
 
 const http = require('http');
 const fs = require('fs');
@@ -11,6 +12,7 @@ const { PRODUCTS, byId } = require('./products');
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY = 8 * 1024 * 1024; // the browser downsizes photos to ~1024px first, so this is generous
+const LEADS_FILE = process.env.LEADS_FILE || path.join(__dirname, 'data', 'leads.jsonl');
 
 // Provider: "gemini" (default), "openai" (any OpenAI-compatible API: OpenRouter, Groq, OpenAI...) or "demo".
 const PROVIDER = (process.env.AI_PROVIDER ||
@@ -210,6 +212,25 @@ function normalise(raw) {
   };
 }
 
+// The names go on the share card and the phone is a betterhood lead, so validate them like the client does.
+function parsePeople(p) {
+  const name = v => String(v || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30);
+  let phone = String(p?.phone || '').replace(/\D/g, '');
+  if (phone.length === 12 && phone.startsWith('91')) phone = phone.slice(2);
+  else if (phone.length === 11 && phone.startsWith('0')) phone = phone.slice(1);
+  const people = { catcher: name(p?.catcher), target: name(p?.target), phone };
+  if (!people.catcher || !people.target) throw new HttpError(400, 'Please add your name and the name of the person you caught.');
+  if (!/^[6-9]\d{9}$/.test(phone)) throw new HttpError(400, 'Please enter a valid 10-digit mobile number.');
+  return people;
+}
+
+function saveLead(people, result) {
+  const row = { at: new Date().toISOString(), ...people, verdict: result.verdict, score: result.score };
+  fs.promises.mkdir(path.dirname(LEADS_FILE), { recursive: true })
+    .then(() => fs.promises.appendFile(LEADS_FILE, JSON.stringify(row) + '\n'))
+    .catch(err => console.error('[leads] could not save:', err.message));
+}
+
 // Tiny in-memory rate limit so one visitor can't drain the free quota.
 const hits = new Map();
 function rateLimited(ip) {
@@ -256,12 +277,16 @@ function serveStatic(req, res) {
 
 // ---------- routes ----------
 
-async function handleAnalyze(req, res) {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
-  if (rateLimited(ip)) throw new HttpError(429, 'Easy there, posture police! Please wait a minute before the next photo.');
+const clientIp = req => req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
 
-  let body;
-  try { body = JSON.parse(await readBody(req)); } catch (e) { throw e instanceof HttpError ? e : new HttpError(400, 'Bad request.'); }
+async function readJson(req) {
+  try { return JSON.parse(await readBody(req)); } catch (e) { throw e instanceof HttpError ? e : new HttpError(400, 'Bad request.'); }
+}
+
+async function handleAnalyze(req, res) {
+  if (rateLimited(clientIp(req))) throw new HttpError(429, 'Easy there, posture police! Please wait a minute before the next photo.');
+
+  const body = await readJson(req);
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(body?.image || '');
   if (!m) throw new HttpError(400, 'Please upload a JPG, PNG or WebP photo.');
 
@@ -274,9 +299,21 @@ async function handleAnalyze(req, res) {
   sendJson(res, 200, result);
 }
 
+// Sent when someone fills in the share form (after the result, just before WhatsApp).
+async function handleLead(req, res) {
+  if (rateLimited(clientIp(req) + ':lead')) throw new HttpError(429, 'Too many requests. Please wait a minute.');
+  const body = await readJson(req);
+  const people = parsePeople(body?.people);
+  const verdict = ['good', 'bad', 'unclear'].includes(body?.verdict) ? body.verdict : 'unclear';
+  const score = Number.isInteger(body?.score) && body.score >= 0 && body.score <= 100 ? body.score : null;
+  saveLead(people, { verdict, score });
+  sendJson(res, 200, { ok: true });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && req.url === '/api/analyze') return await handleAnalyze(req, res);
+    if (req.method === 'POST' && req.url === '/api/lead') return await handleLead(req, res);
     if (req.method === 'GET' && req.url === '/api/health') return sendJson(res, 200, { ok: true, provider: PROVIDER });
     if (req.method === 'GET' || req.method === 'HEAD') return serveStatic(req, res);
     sendJson(res, 405, { error: 'Method not allowed' });
